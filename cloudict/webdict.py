@@ -40,11 +40,20 @@ class UnavailableWebResourceError(WebDictError):
 
 class InvalidWebResourceError(WebDictError):
     """
-    >>> wrong_dict = WebDict(lambda s: 'https://vpic.nhtsa.dot.gov/api/vehicles/getmakeformanufacturer/' + s) # will get xml
+    >>> wrong_dict = WebDict(lambda s: 'https://vpic.nhtsa.dot.gov/api/vehicles/getmakeformanufacturer/' + s, json.loads) # will get xml
     >>> wrong_dict['tesla']
     Traceback (most recent call last):
         ...
     InvalidWebResourceError: failed to parse response from https://vpic.nhtsa.dot.gov/api/vehicles/getmakeformanufacturer/tesla: Expecting value: line 1 column 1 (char 0)
+    ('<Response xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+     'xmlns:xsd="http://www.w3.org/2001/XMLSchema"><Count>1</Count><Message>Results '
+     'returned '
+     'successfully</Message><SearchCriteria>Manufacturer:tesla</SearchCriteria><Results><MakesForMfg><Mfr_Name>TESLA, '
+     'INC.</Mfr_Name><Make_ID>441</Make_ID><Make_Name>Tesla</Make_Name></MakesForMfg></Results></Response>')
+
+    >>> from pprint import pprint
+    >>> ok_dict = WebDict(lambda s: 'https://vpic.nhtsa.dot.gov/api/vehicles/getmakeformanufacturer/' + s) # will get xml
+    >>> pprint(ok_dict['tesla'])
     ('<Response xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
      'xmlns:xsd="http://www.w3.org/2001/XMLSchema"><Count>1</Count><Message>Results '
      'returned '
@@ -64,15 +73,14 @@ class WebDict(collections.UserDict):
         url = self.make_url(key)
 
         try:
-            s = urllib.request.urlopen(url).read()
+            s = urllib.request.urlopen(url).read().decode('utf8')
         except urllib.error.URLError as e:
             raise UnavailableWebResourceError(str.format('failed to get {}: {}', url, e.reason))
 
         try:
-            self[key] = json.loads(s)
+            self[key] = self.parse_response(s)
         except Exception as e:
-            raise InvalidWebResourceError(str.format('failed to parse response from {}: {}\n{}', url, e,
-                                                     pformat(s.decode('utf8'))))
+            raise InvalidWebResourceError(str.format('failed to parse response from {}: {}\n{}', url, e, pformat(s)))
 
         return self[key]
 
