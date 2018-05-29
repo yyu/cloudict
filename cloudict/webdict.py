@@ -2,6 +2,7 @@ r"""Mapping Key to Web Resource"""
 
 
 import json
+import csv
 from functools import lru_cache
 from functools import reduce
 
@@ -164,6 +165,34 @@ class WebDict(collections.UserDict):
             raise KeyError(key)
 
         return self[key]
+
+
+class WebCSV(WebDict):
+    def __init__(self, csv_url, delimiter=',', key_pos=0):
+        def load_lines(d, _, s):
+            csv_as_list_of_dict = csv.DictReader(s.splitlines(), delimiter=delimiter)
+
+            key_field = csv_as_list_of_dict.fieldnames[key_pos]
+
+            for record in csv_as_list_of_dict:
+                key = record[key_field]
+                d[key] = record
+
+        super().__init__(lambda _: csv_url, bytes.decode, load_lines, False)
+
+
+class WebTSV(WebCSV):
+    """example::
+
+        >>> gazetteer = WebTSV('https://raw.githubusercontent.com/yyu/GeoJSON-US/master/ZIPCodesGazetteer.tsv')
+        >>> place = gazetteer['98109']
+        >>> (place['INTPTLAT'], place['INTPTLONG'])
+        ('47.631863', '-122.344267')
+        >>> len(gazetteer)  # all lines have been propagated, 33144 in total
+        33144
+    """
+    def __init__(self, tsv_url, key_pos=0):
+        super().__init__(tsv_url, delimiter='\t', key_pos=key_pos)
 
 
 if __name__ == "__main__":
