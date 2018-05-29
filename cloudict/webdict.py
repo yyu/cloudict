@@ -3,6 +3,7 @@ r"""Mapping Key to Web Resource"""
 
 import json
 from functools import lru_cache
+from functools import reduce
 
 import collections
 import urllib.request
@@ -42,11 +43,11 @@ class InvalidWebResourceError(WebDictError):
     >>> from pprint import pprint
     >>> ok_dict = WebDict(lambda s: 'https://vpic.nhtsa.dot.gov/api/vehicles/getmakeformanufacturer/' + s) # will get xml
     >>> pprint(ok_dict['tesla'])
-    ('<Response xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-     'xmlns:xsd="http://www.w3.org/2001/XMLSchema"><Count>1</Count><Message>Results '
-     'returned '
-     'successfully</Message><SearchCriteria>Manufacturer:tesla</SearchCriteria><Results><MakesForMfg><Mfr_Name>TESLA, '
-     'INC.</Mfr_Name><Make_ID>441</Make_ID><Make_Name>Tesla</Make_Name></MakesForMfg></Results></Response>')
+    (b'<Response xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="h'
+     b'ttp://www.w3.org/2001/XMLSchema"><Count>1</Count><Message>Results returned s'
+     b'uccessfully</Message><SearchCriteria>Manufacturer:tesla</SearchCriteria><Res'
+     b'ults><MakesForMfg><Mfr_Name>TESLA, INC.</Mfr_Name><Make_ID>441</Make_ID><Mak'
+     b'e_Name>Tesla</Make_Name></MakesForMfg></Results></Response>')
     """
     pass
 
@@ -60,7 +61,33 @@ def _retrieve(url):
     try:
         return urllib.request.urlopen(url).read()
     except urllib.error.URLError as e:
-        raise UnavailableWebResourceError(str.format('failed to get {}: {}', url, e.reason))
+        raise UnavailableWebResourceError('failed to get {}: {}'.format(url, e.reason))
+
+
+class ResponseProcessors:
+    @classmethod
+    def json_loads(cls):
+        return json.loads
+
+    @classmethod
+    def json_loads_path(cls, path):
+        """returns a function that extracts part of a json string
+        example::
+
+            >>> f = ResponseProcessors.json_loads_path(['Results', 'Numbers'])
+            >>> f('''{"Message": "success", "Results": {"Numbers": {"one": 1, "two": 2}}}''')
+            {'one': 1, 'two': 2}
+            >>> f('''{"Message": "success", "Results": {"Numbers": {"three": 3}}}''')
+            {'three': 3}
+
+            >>> f = ResponseProcessors.json_loads_path(['Results', 'Strings', 1])
+            >>> f('''{"Message": "success", "Results": {"Strings": ["foo", "bar", "baz"]}}''')
+            'bar'
+        """
+        def loads_with_path(s):
+            return reduce(lambda x, y: x[y], path, json.loads(s))
+
+        return loads_with_path
 
 
 class WebDict(collections.UserDict):
@@ -94,22 +121,26 @@ class WebDict(collections.UserDict):
         >>> tesla = WebDict(url_maker=lambda _: url, response_processor=json.loads, post_processor=propagate)
         >>> tesla['Model S']
         {'Make_ID': 441, 'Make_Name': 'Tesla', 'Model_ID': 1685, 'Model_Name': 'Model S'}
+        >>> tesla['Roadster']
+        {'Make_ID': 441, 'Make_Name': 'Tesla', 'Model_ID': 2071, 'Model_Name': 'Roadster'}
         >>> list(tesla.keys())
         ['Model S', 'Roadster', 'Model X', 'Model 3']
-        >>> tesla['Civic']
+        >>> tesla['F150']
         Traceback (most recent call last):
             ...
-        KeyError: 'Civic'
+        KeyError: 'F150'
 
     as you have seen above, all models have been propagated although only 'Model S' was queried.
     """
-    def __init__(self, url_maker=lambda key: None, response_processor=lambda s: s,
+    def __init__(self,
+                 url_maker=lambda key: None,
+                 response_processor=lambda s: s,
                  post_processor=lambda d, key, value: collections.UserDict.__setitem__(d, key, value),
                  cache=True):
         super().__init__()
 
         if url_maker is None:
-            raise RuntimeError("url_maker cannot be None")
+            raise RuntimeError("you need a url_maker")
 
         self.make_url = url_maker
         self.parse_response = response_processor
@@ -122,10 +153,9 @@ class WebDict(collections.UserDict):
         data = _cached_retrieve(url) if self.cache_enabled else _retrieve(url)
 
         try:
-            response = data.decode('utf8')
-            value = self.parse_response(response)
+            value = self.parse_response(data)
         except Exception as e:
-            raise InvalidWebResourceError(str.format('failed to parse response from {}: {}\n{}', url, e, pformat(data)))
+            raise InvalidWebResourceError('failed to parse response from {}: {}\n{}'.format(url, e, pformat(data)))
 
         self.post_process(self, key, value)
 
