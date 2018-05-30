@@ -180,6 +180,14 @@ class WebCSV(WebDict):
 
         super().__init__(lambda _: csv_url, bytes.decode, load_lines, False)
 
+        self.propagate()
+
+    def propagate(self):
+        try:
+            self['']  # to trigger the actual IO using an arbitrary key
+        except KeyError:
+            pass
+
 
 class WebTSV(WebCSV):
     """example::
