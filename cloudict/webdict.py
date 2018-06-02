@@ -147,16 +147,18 @@ class WebDict(collections.UserDict):
         self.parse_response = response_processor
         self.post_process = post_processor
         self.cache_enabled = cache
+        self.recent_data = None
 
     def __missing__(self, key):
         url = self.make_url(key)
 
-        data = _cached_retrieve(url) if self.cache_enabled else _retrieve(url)
+        self.recent_data = _cached_retrieve(url) if self.cache_enabled else _retrieve(url)
 
         try:
-            value = self.parse_response(data)
+            value = self.parse_response(self.recent_data)
         except Exception as e:
-            raise InvalidWebResourceError('failed to parse response from {}: {}\n{}'.format(url, e, pformat(data)))
+            error_message = 'failed to parse response from {}: {}\n{}'.format(url, e, pformat(self.recent_data))
+            raise InvalidWebResourceError(error_message)
 
         self.post_process(self, key, value)
 
@@ -167,7 +169,20 @@ class WebDict(collections.UserDict):
         return self[key]
 
 
-class WebCSV(WebDict):
+class WebFile(WebDict):
+    def __init__(self, url, response_processor=bytes.decode,
+                 post_processor=lambda d, _, value: collections.UserDict.__setitem__(d, 'content', value)):
+        super().__init__(lambda _: url, response_processor, post_processor, cache=False)
+        self.propagate()
+
+    def propagate(self):
+        try:
+            self['content']  # to trigger the actual IO
+        except KeyError:
+            pass
+
+
+class WebCSV(WebFile):
     def __init__(self, csv_url, delimiter=',', key_pos=0):
         def load_lines(d, _, s):
             csv_as_list_of_dict = csv.DictReader(s.splitlines(), delimiter=delimiter)
@@ -178,15 +193,7 @@ class WebCSV(WebDict):
                 key = record[key_field]
                 d[key] = record
 
-        super().__init__(lambda _: csv_url, bytes.decode, load_lines, False)
-
-        self.propagate()
-
-    def propagate(self):
-        try:
-            self['']  # to trigger the actual IO using an arbitrary key
-        except KeyError:
-            pass
+        super().__init__(csv_url, bytes.decode, load_lines)
 
 
 class WebTSV(WebCSV):
@@ -201,6 +208,25 @@ class WebTSV(WebCSV):
     """
     def __init__(self, tsv_url, key_pos=0):
         super().__init__(tsv_url, delimiter='\t', key_pos=key_pos)
+
+
+class WebJSON(WebFile):
+    """example::
+
+        >>> island = WebJSON('https://raw.githubusercontent.com/yyu/GeoJSON-US/master/perZIPgeojson/9/8/0/98040.json')
+        >>> len(island.as_bytes())
+        2342
+        >>> list(island.as_dict())
+        ['type', 'properties', 'geometry']
+    """
+    def __init__(self, json_url):
+        super().__init__(json_url, json.loads)
+
+    def as_bytes(self):
+        return self.recent_data
+
+    def as_dict(self):
+        return self['content']
 
 
 if __name__ == "__main__":
